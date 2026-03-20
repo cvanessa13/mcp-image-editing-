@@ -1,6 +1,18 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AspectRatio, GenerateImageParams } from '../../types/mcp'
-import { validateBase64Image, validateGenerateImageParams, validatePrompt } from '../inputValidator'
+import {
+  validateBase64Image,
+  validateGenerateImageParams,
+  validateImagePath,
+  validatePrompt,
+} from '../inputValidator'
+
+// Mock node:fs for validateImagePath tests
+vi.mock('node:fs', () => ({
+  existsSync: vi.fn(),
+}))
+
+import { existsSync } from 'node:fs'
 
 describe('inputValidator', () => {
   describe('validatePrompt', () => {
@@ -338,5 +350,109 @@ describe('inputValidator', () => {
         expect(result.error.message).toContain('quality')
       }
     })
+  })
+})
+
+describe('validateImagePath', () => {
+  it('should return success for undefined path (optional parameter)', () => {
+    // Arrange & Act
+    const result = validateImagePath(undefined)
+
+    // Assert
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data).toBeUndefined()
+    }
+  })
+
+  it('should return error when image file does not exist', () => {
+    // Arrange
+    vi.mocked(existsSync).mockReturnValue(false)
+
+    // Act
+    const result = validateImagePath('/path/to/nonexistent/image.png')
+
+    // Assert
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.code).toBe('INPUT_VALIDATION_ERROR')
+      expect(result.error.message).toContain('Input image file not found')
+      expect(result.error.message).toContain('/path/to/nonexistent/image.png')
+      expect(result.error.suggestion).toContain('absolute path')
+    }
+  })
+
+  it('should return error for unsupported image format', () => {
+    // Arrange
+    vi.mocked(existsSync).mockReturnValue(true)
+
+    // Act
+    const result = validateImagePath('/path/to/document.pdf')
+
+    // Assert
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.code).toBe('INPUT_VALIDATION_ERROR')
+      expect(result.error.message).toContain('Unsupported image format: .pdf')
+      expect(result.error.suggestion).toContain('.jpg')
+      expect(result.error.suggestion).toContain('.png')
+    }
+  })
+
+  it('should return success for valid PNG image path', () => {
+    // Arrange
+    vi.mocked(existsSync).mockReturnValue(true)
+
+    // Act
+    const result = validateImagePath('/path/to/image.png')
+
+    // Assert
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data).toBe('/path/to/image.png')
+    }
+  })
+
+  it('should return success for valid JPEG image path', () => {
+    // Arrange
+    vi.mocked(existsSync).mockReturnValue(true)
+
+    // Act
+    const result = validateImagePath('/path/to/image.jpg')
+
+    // Assert
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data).toBe('/path/to/image.jpg')
+    }
+  })
+
+  it('should return success for valid WebP image path', () => {
+    // Arrange
+    vi.mocked(existsSync).mockReturnValue(true)
+
+    // Act
+    const result = validateImagePath('/path/to/image.webp')
+
+    // Assert
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data).toBe('/path/to/image.webp')
+    }
+  })
+
+  it('should return error for executable file extension even if file exists', () => {
+    // Arrange
+    vi.mocked(existsSync).mockReturnValue(true)
+
+    // Act
+    const result = validateImagePath('/path/to/malware.exe')
+
+    // Assert
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.code).toBe('INPUT_VALIDATION_ERROR')
+      expect(result.error.message).toContain('Unsupported image format: .exe')
+    }
   })
 })
