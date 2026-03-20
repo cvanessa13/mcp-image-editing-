@@ -1,6 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMCPServer, MCPServerImpl } from '../mcpServer'
 
+// Mock node:fs/promises for inputImagePath tests
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn().mockResolvedValue(Buffer.from('mock-input-image-data', 'utf-8')),
+}))
+
+// Mock the Gemini text client so structuredPromptGenerator does not make API calls
+vi.mock('../../api/geminiTextClient', () => {
+  return {
+    createGeminiTextClient: vi.fn().mockImplementation(() => {
+      const mockClient = {
+        generateText: vi.fn().mockResolvedValue({
+          success: true,
+          data: 'enhanced structured prompt',
+        }),
+        validateConnection: vi.fn().mockResolvedValue({ success: true }),
+      }
+      return { success: true, data: mockClient }
+    }),
+  }
+})
+
 // Mock the Gemini client for unit tests
 vi.mock('../../api/geminiClient', () => {
   return {
@@ -415,5 +436,252 @@ describe('MCPServer tool schema - imageSize', () => {
     expect(imageSizeEnum).toContain('1K')
     expect(imageSizeEnum).toContain('2K')
     expect(imageSizeEnum).toContain('4K')
+  })
+})
+
+// Test suite for image editing feature parameters in generate_image tool schema
+describe('MCPServer tool schema - image editing features', () => {
+  it('should include inputImagePath for image-to-image editing in schema', () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const toolsList = mcpServer.getToolsList()
+    const generateImageTool = toolsList.tools.find((t) => t.name === 'generate_image')
+
+    // Assert
+    expect(generateImageTool?.inputSchema.properties).toHaveProperty('inputImagePath')
+    expect(generateImageTool?.inputSchema.properties?.inputImagePath.type).toBe('string')
+    expect(generateImageTool?.inputSchema.required).not.toContain('inputImagePath')
+  })
+
+  it('should include blendImages feature flag in schema', () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const toolsList = mcpServer.getToolsList()
+    const generateImageTool = toolsList.tools.find((t) => t.name === 'generate_image')
+
+    // Assert
+    expect(generateImageTool?.inputSchema.properties).toHaveProperty('blendImages')
+    expect(generateImageTool?.inputSchema.properties?.blendImages.type).toBe('boolean')
+    expect(generateImageTool?.inputSchema.required).not.toContain('blendImages')
+  })
+
+  it('should include maintainCharacterConsistency feature flag in schema', () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const toolsList = mcpServer.getToolsList()
+    const generateImageTool = toolsList.tools.find((t) => t.name === 'generate_image')
+
+    // Assert
+    expect(generateImageTool?.inputSchema.properties).toHaveProperty('maintainCharacterConsistency')
+    expect(generateImageTool?.inputSchema.properties?.maintainCharacterConsistency.type).toBe(
+      'boolean'
+    )
+    expect(generateImageTool?.inputSchema.required).not.toContain('maintainCharacterConsistency')
+  })
+
+  it('should include useWorldKnowledge feature flag in schema', () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const toolsList = mcpServer.getToolsList()
+    const generateImageTool = toolsList.tools.find((t) => t.name === 'generate_image')
+
+    // Assert
+    expect(generateImageTool?.inputSchema.properties).toHaveProperty('useWorldKnowledge')
+    expect(generateImageTool?.inputSchema.properties?.useWorldKnowledge.type).toBe('boolean')
+    expect(generateImageTool?.inputSchema.required).not.toContain('useWorldKnowledge')
+  })
+
+  it('should include useGoogleSearch feature flag in schema', () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const toolsList = mcpServer.getToolsList()
+    const generateImageTool = toolsList.tools.find((t) => t.name === 'generate_image')
+
+    // Assert
+    expect(generateImageTool?.inputSchema.properties).toHaveProperty('useGoogleSearch')
+    expect(generateImageTool?.inputSchema.properties?.useGoogleSearch.type).toBe('boolean')
+    expect(generateImageTool?.inputSchema.required).not.toContain('useGoogleSearch')
+  })
+
+  it('should include purpose parameter in schema', () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const toolsList = mcpServer.getToolsList()
+    const generateImageTool = toolsList.tools.find((t) => t.name === 'generate_image')
+
+    // Assert
+    expect(generateImageTool?.inputSchema.properties).toHaveProperty('purpose')
+    expect(generateImageTool?.inputSchema.properties?.purpose.type).toBe('string')
+    expect(generateImageTool?.inputSchema.required).not.toContain('purpose')
+  })
+
+  it('should only require prompt in the schema', () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const toolsList = mcpServer.getToolsList()
+    const generateImageTool = toolsList.tools.find((t) => t.name === 'generate_image')
+
+    // Assert - only prompt is required; all editing features are optional
+    expect(generateImageTool?.inputSchema.required).toEqual(['prompt'])
+  })
+})
+
+// Test suite for image editing execution via callTool
+describe('MCPServer callTool - image editing execution', () => {
+  let originalApiKey: string | undefined
+
+  beforeEach(() => {
+    originalApiKey = process.env.GEMINI_API_KEY
+    process.env.GEMINI_API_KEY = 'test-api-key-unit-tests'
+    process.env.IMAGE_OUTPUT_DIR = './test-output'
+  })
+
+  afterEach(() => {
+    if (originalApiKey !== undefined) {
+      process.env.GEMINI_API_KEY = originalApiKey
+    } else {
+      delete process.env.GEMINI_API_KEY
+    }
+  })
+
+  it('should accept inputImagePath for image-to-image editing', async () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const result = await mcpServer.callTool('generate_image', {
+      prompt: 'Apply watercolor style to this image',
+      inputImagePath: '/path/to/input-image.png',
+    })
+
+    // Assert
+    expect(result).toBeDefined()
+    expect(result.content).toBeDefined()
+    expect(result.content[0].type).toBe('text')
+
+    const responseData = JSON.parse(result.content[0].text)
+    expect(responseData).toHaveProperty('type', 'resource')
+    expect(responseData.resource.uri).toMatch(/^file:\/\//)
+  })
+
+  it('should accept blendImages feature flag', async () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const result = await mcpServer.callTool('generate_image', {
+      prompt: 'A warrior in a fantasy forest',
+      blendImages: true,
+    })
+
+    // Assert
+    expect(result).toBeDefined()
+    expect(result.isError).toBeFalsy()
+    const responseData = JSON.parse(result.content[0].text)
+    expect(responseData).toHaveProperty('type', 'resource')
+  })
+
+  it('should accept maintainCharacterConsistency feature flag', async () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const result = await mcpServer.callTool('generate_image', {
+      prompt: 'The same hero in a new scene',
+      maintainCharacterConsistency: true,
+    })
+
+    // Assert
+    expect(result).toBeDefined()
+    expect(result.isError).toBeFalsy()
+    const responseData = JSON.parse(result.content[0].text)
+    expect(responseData).toHaveProperty('type', 'resource')
+  })
+
+  it('should accept useWorldKnowledge feature flag', async () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const result = await mcpServer.callTool('generate_image', {
+      prompt: 'The Eiffel Tower at sunset',
+      useWorldKnowledge: true,
+    })
+
+    // Assert
+    expect(result).toBeDefined()
+    expect(result.isError).toBeFalsy()
+    const responseData = JSON.parse(result.content[0].text)
+    expect(responseData).toHaveProperty('type', 'resource')
+  })
+
+  it('should accept useGoogleSearch feature flag', async () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const result = await mcpServer.callTool('generate_image', {
+      prompt: 'Current Tokyo skyline 2025',
+      useGoogleSearch: true,
+    })
+
+    // Assert
+    expect(result).toBeDefined()
+    expect(result.isError).toBeFalsy()
+    const responseData = JSON.parse(result.content[0].text)
+    expect(responseData).toHaveProperty('type', 'resource')
+  })
+
+  it('should accept purpose parameter for context-aware generation', async () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const result = await mcpServer.callTool('generate_image', {
+      prompt: 'A delicious bowl of ramen',
+      purpose: 'restaurant menu cover',
+    })
+
+    // Assert
+    expect(result).toBeDefined()
+    expect(result.isError).toBeFalsy()
+    const responseData = JSON.parse(result.content[0].text)
+    expect(responseData).toHaveProperty('type', 'resource')
+  })
+
+  it('should accept combined image editing parameters', async () => {
+    // Arrange
+    const mcpServer = createMCPServer()
+
+    // Act
+    const result = await mcpServer.callTool('generate_image', {
+      prompt: 'Transform this portrait into anime style',
+      inputImagePath: '/path/to/portrait.jpg',
+      maintainCharacterConsistency: true,
+      aspectRatio: '3:4',
+      quality: 'balanced',
+      purpose: 'social media profile picture',
+    })
+
+    // Assert
+    expect(result).toBeDefined()
+    expect(result.isError).toBeFalsy()
+    const responseData = JSON.parse(result.content[0].text)
+    expect(responseData).toHaveProperty('type', 'resource')
+    expect(responseData).toHaveProperty('metadata')
   })
 })
